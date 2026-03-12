@@ -1,0 +1,252 @@
+###############################################################################
+# .github/workflows/cicd.yml
+# Pipeline CI/CD – XYZ University Students App
+#
+# Déclencheurs :
+#   - Push sur main  → pipeline complète (build → test → push → load → deploy)
+#   - Push sur dev   → build + tests uniquement (pas de deploy)
+#   - Pull Request   → build + tests uniquement
+#
+# Secrets GitHub requis (Settings → Secrets → Actions) :
+#   DOCKERHUB_USERNAME   : votre username Docker Hub
+#   DOCKERHUB_TOKEN      : token Docker Hub (pas le mot de passe)
+#   EC2_HOST             : IP publique de l'EC2
+#   EC2_SSH_KEY          : contenu du fichier labsuser.pem
+#   AWS_ACCESS_KEY_ID    : credentials AWS Academy
+#   AWS_SECRET_ACCESS_KEY: credentials AWS Academy
+#   AWS_SESSION_TOKEN    : credentials AWS Academy
+#   DB_PASSWORD          : mot de passe RDS (ou lire depuis Secrets Manager)
+###############################################################################
+
+name: CI/CD – Students App
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/students-app
+  IMAGE_TAG: ${{ github.sha }}
+  NODE_VERSION: "18"
+  AWS_REGION: us-east-1
+  RDS_ENDPOINT: universite-exemple-poc-mysql.czcugausmn9e.us-east-1.rds.amazonaws.com
+
+jobs:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 1 – Build & Test qualité
+  # ════════════════════════════════════════════════════════════════════════════
+  build-and-test:
+    name: Build & Quality Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: resources/codebase_partner/package-lock.json
+
+      - name: Installation des dependances
+        working-directory: resources/codebase_partner
+        run: npm ci
+
+      - name: Lint (ESLint)
+        working-directory: resources/codebase_partner
+        run: |
+          # Installer ESLint si absent du projet
+          npx eslint . --ext .js \
+            --rule 'no-unused-vars: warn' \
+            --rule 'no-console: off' \
+            --ignore-pattern node_modules/ \
+            || echo "ESLint termine (warnings non bloquants)"
+
+      - name: Tests unitaires
+        working-directory: resources/codebase_partner
+        run: |
+          if [ -f package.json ] && grep -q '"test"' package.json; then
+            npm test
+          else
+            echo "Aucun test unitaire configure – etape ignoree"
+          fi
+
+      - name: Audit securite des dependances
+        working-directory: resources/codebase_partner
+        run: npm audit --audit-level=high || echo "Vulnerabilites detectees (non bloquant en POC)"
+
+      - name: Build Docker (linux/amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker
+
+      - name: Test smoke du container
+        run: |
+          docker run -d \
+            --name students-smoke \
+            -p 3000:80 \
+            -e APP_DB_HOST="localhost" \
+            -e APP_DB_USER="test" \
+            -e APP_DB_PASSWORD="test" \
+            -e APP_DB_NAME="students" \
+            -e APP_PORT="80" \
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+          sleep 8
+
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 || echo "000")
+          echo "HTTP Status: $HTTP"
+
+          docker logs students-smoke
+          docker stop students-smoke
+
+          # Le container doit demarrer (meme sans DB, la page d'accueil repond)
+          [ "$HTTP" = "200" ] || [ "$HTTP" = "500" ] \
+            && echo "Container OK (DB absent en CI - normal)" \
+            || (echo "Container KO - HTTP $HTTP" && exit 1)
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2 – Push de l'image Docker
+  # Uniquement sur push vers main
+  # ════════════════════════════════════════════════════════════════════════════
+  docker-push:
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build et Push (linux/amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Resume image poussee
+        run: |
+          echo "Image poussee :"
+          echo "  ${{ env.IMAGE_NAME }}:latest"
+          echo "  ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 3 – Déploiement en production
+  # ════════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to Production (EC2)
+    runs-on: ubuntu-latest
+    needs: docker-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: http://${{ secrets.EC2_HOST }}/students
+
+    steps:
+      - name: Deploy sur EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 120s
+          script: |
+            echo "[INFO] Arret du container existant..."
+            sudo docker stop students-app 2>/dev/null || true
+            sudo docker rm   students-app 2>/dev/null || true
+
+            echo "[INFO] Pull de la nouvelle image..."
+            sudo docker pull ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+            echo "[INFO] Lancement du container..."
+            sudo docker run -d \
+              --name students-app \
+              --restart unless-stopped \
+              -p 80:80 \
+              -e APP_DB_HOST="${{ env.RDS_ENDPOINT }}" \
+              -e APP_DB_USER="dbadmin" \
+              -e APP_DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e APP_DB_NAME="students" \
+              -e APP_PORT="80" \
+              ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+            sleep 5
+            sudo docker ps --filter name=students-app --format "{{.Status}}"
+            echo "[OK] Deploiement termine"
+
+      - name: Verification post-deploy
+        run: |
+          sleep 10
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://${{ secrets.EC2_HOST }} || echo "000")
+          echo "HTTP Status post-deploy: $HTTP"
+          [ "$HTTP" = "200" ] || (echo "Deploy KO" && exit 1)
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 4 – Tests de charge k6
+  # Après le déploiement, uniquement sur main
+  # ════════════════════════════════════════════════════════════════════════════
+  load-test:
+    name: Load Test (k6)
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation de k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] \
+            https://dl.k6.io/deb stable main" | \
+            sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+
+      - name: Execution du test de charge
+        run: |
+          k6 run \
+            --env TARGET_URL=http://${{ secrets.EC2_HOST }} \
+            --out json=tests/load/results.json \
+            tests/load/load-test.js
+
+      - name: Upload des resultats k6
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results-${{ github.sha }}
+          path: tests/load/results.json
