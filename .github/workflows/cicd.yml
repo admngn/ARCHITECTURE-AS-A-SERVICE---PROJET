@@ -81,7 +81,7 @@ jobs:
       - name: Build Docker (linux/amd64)
         uses: docker/build-push-action@v5
         with:
-          context: phase4-docker
+          context: .
           file: Dockerfile
           platforms: linux/amd64
           push: false
@@ -138,7 +138,7 @@ jobs:
       - name: Build et Push (linux/amd64)
         uses: docker/build-push-action@v5
         with:
-          context: phase4-docker
+          context: .
           file: Dockerfile
           platforms: linux/amd64
           push: true
