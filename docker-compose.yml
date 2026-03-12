@@ -1,0 +1,29 @@
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: STUDENTS
+      MYSQL_USER: nodeapp
+      MYSQL_PASSWORD: student12
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  app:
+    build: .
+    ports:
+      - "80:80"
+    environment:
+      APP_DB_HOST: db
+      APP_DB_USER: nodeapp
+      APP_DB_PASSWORD: student12
+      APP_DB_NAME: STUDENTS
+      APP_PORT: 80
+    depends_on:
+      - db
+
+volumes:
+  db_data:
