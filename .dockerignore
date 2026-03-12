@@ -1,0 +1,28 @@
+# Dependances – reinstallees dans le container
+node_modules
+npm-debug.log*
+
+# Fichiers de developpement
+.env
+.env.*
+!.env.example
+*.log
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Terraform
+terraform-phase*/
+*.tfstate
+*.tfvars
+.terraform/
+
+# OS
+.DS_Store
+Thumbs.db
