@@ -22,7 +22,7 @@ name: CI/CD – Students App
 
 on:
   push:
-    branches: [main, dev]
+    branches: [phase5]
   pull_request:
     branches: [main]
 
