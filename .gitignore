@@ -6,6 +6,11 @@ terraform.tfstate.backup
 terraform.tfstate.d/
 tfplan
 *.tfplan
+*.tfstate
+*.tfvars
+*.tfstate.backup
+.terraform.tfstate
+.claude/
 
 # Variables avec données sensibles
 terraform.tfvars
