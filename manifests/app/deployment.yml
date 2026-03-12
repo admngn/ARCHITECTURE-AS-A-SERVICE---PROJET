@@ -1,0 +1,82 @@
+###############################################################################
+# manifests/app/deployment.yml
+# Deployment Kubernetes – Students App
+# Remplacez <DOCKERHUB_USERNAME> par votre username Docker Hub
+###############################################################################
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: students-app
+  namespace: students
+  labels:
+    app: students-app
+    version: "1.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: students-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: students-app
+    spec:
+      containers:
+        - name: students-app
+          image: zolda/students-app:latest   # ← votre image Docker Hub
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          env:
+            - name: APP_PORT
+              value: "80"
+            - name: NODE_ENV
+              value: "production"
+            - name: APP_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: host
+            - name: APP_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: username
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: password
+            - name: APP_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: dbname
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 3
+      terminationGracePeriodSeconds: 30

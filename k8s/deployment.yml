@@ -1,0 +1,111 @@
+###############################################################################
+# k8s/deployment.yml
+# Deploiement Kubernetes de l'application Students
+# Port 3000 (non-root) avec probes correctement configurees
+###############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: students-app
+  namespace: default
+  labels:
+    app: students-app
+    phase: "6"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: students-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: students-app
+    spec:
+      containers:
+        - name: students-app
+          image: zolda/students-app:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: APP_PORT
+              value: "3000"
+            - name: APP_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: host
+            - name: APP_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: user
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+            - name: APP_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: dbname
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: students-app-service
+  namespace: default
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  selector:
+    app: students-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: students-app-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: students-app
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

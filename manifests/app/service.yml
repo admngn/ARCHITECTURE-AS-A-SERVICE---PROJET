@@ -1,0 +1,74 @@
+###############################################################################
+# manifests/app/service.yml
+# Service + HorizontalPodAutoscaler – Students App
+###############################################################################
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: students
+  labels:
+    app: students-app
+
+---
+# Secret DB – créé via script (ne pas committer avec vraies valeurs)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: students
+type: Opaque
+stringData:
+  host: "universite-exemple-poc-mysql.czcugausmn9e.us-east-1.rds.amazonaws.com"
+  username: "dbadmin"
+  password: "REMPLACER_PAR_MOT_DE_PASSE"   # remplacé par deploy.sh
+  dbname: "students"
+
+---
+# Service de type LoadBalancer – crée un ALB AWS automatiquement
+apiVersion: v1
+kind: Service
+metadata:
+  name: students-app-svc
+  namespace: students
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer
+  selector:
+    app: students-app
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 80
+
+---
+# Horizontal Pod Autoscaler – scale 2 à 6 pods selon CPU
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: students-app-hpa
+  namespace: students
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: students-app
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
