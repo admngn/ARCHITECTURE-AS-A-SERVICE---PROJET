@@ -169,7 +169,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: production
-      url: http://${{ secrets.EC2_HOST }}/students
+      
 
     steps:
       - name: Deploy sur EC2 via SSH
