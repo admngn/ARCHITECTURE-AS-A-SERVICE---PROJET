@@ -24,7 +24,7 @@ on:
   push:
     branches: [phase5]
   pull_request:
-    branches: [main]
+    branches: [phase5]
 
 env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/students-app
