@@ -1,0 +1,41 @@
+###############################################################################
+# terraform.tfvars – Valeurs à personnaliser pour votre environnement
+# IMPORTANT : Ne commitez jamais ce fichier dans Git s'il contient des secrets.
+#             Ajoutez terraform.tfvars à votre .gitignore.
+###############################################################################
+
+# ── Général ──────────────────────────────────────────────────────────────────
+aws_region   = "us-east-1"
+project_name = "universite-exemple"
+environment  = "poc"
+
+# ── Réseau ───────────────────────────────────────────────────────────────────
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
+
+# ── EC2 ──────────────────────────────────────────────────────────────────────
+ec2_instance_type = "t3.micro"
+key_pair_name     = "vockey"     # ← Remplacez par le nom de votre Key Pair AWS
+app_port          = 80
+
+# URL du script UserData fourni par l'atelier
+userdata_script_url = "https://aws-tc-largeobjects.s3.us-west-2.amazonaws.com/CUR-TF-200-ACCAP1-1-91571/1-lab-capstone-project-1/s3/UserdataScript-phase-2.sh"
+
+# ── RDS ──────────────────────────────────────────────────────────────────────
+db_name              = "students"
+db_username          = "dbadmin"
+db_port              = 3306
+db_instance_class    = "db.t3.micro"
+db_engine_version    = "8.0"
+db_allocated_storage = 20
+db_multi_az          = false           # true pour la Phase 3 (production)
+db_deletion_protection = false         # true en production
+
+# ── Cloud9 ───────────────────────────────────────────────────────────────────
+cloud9_instance_type = "t3.small"
+# cloud9_owner_arn   = "arn:aws:iam::123456789012:user/mon-utilisateur"
+# Laissez vide pour utiliser l'identité Terraform courante
+
+# ── Secrets Manager ──────────────────────────────────────────────────────────
+secret_recovery_days = 0   # Suppression immédiate en POC (7 minimum en prod)

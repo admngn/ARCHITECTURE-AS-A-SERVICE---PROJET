@@ -1,0 +1,31 @@
+# Terraform state et fichiers locaux – NE JAMAIS COMMITER
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.d/
+tfplan
+*.tfplan
+
+# Variables avec données sensibles
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# Clés SSH
+*.pem
+*.ppk
+*.key
+
+# Logs
+*.log
+crash.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
