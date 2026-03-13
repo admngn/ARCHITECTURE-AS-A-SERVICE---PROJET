@@ -1,0 +1,26 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "severity"]
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: "default"
+
+receivers:
+  - name: "default"
+    # Pour l'instant les alertes sont visibles dans l'UI Alertmanager
+    # Pour envoyer des emails/Slack, décommentez et configurez :
+    #
+    # slack_configs:
+    #   - api_url: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+    #     channel: "#alerts"
+    #     send_resolved: true
+    #
+    # email_configs:
+    #   - to: "admin@example.com"
+    #     from: "alertmanager@example.com"
+    #     smarthost: "smtp.gmail.com:587"
+    #     auth_username: "alertmanager@example.com"
+    #     auth_password: "app-password"

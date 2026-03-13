@@ -1,0 +1,43 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # Prometheus se monitore lui-même
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Application Node.js students-app
+  - job_name: "students-app"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:80"]
+    # Si l'app n'expose pas /metrics nativement, on utilise blackbox
+    # pour vérifier qu'elle répond (voir blackbox ci-dessous)
+
+  # Blackbox exporter — vérifie que l'app répond en HTTP
+  - job_name: "blackbox-http"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://app:80
+          - http://app:80/students
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
