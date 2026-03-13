@@ -15,17 +15,18 @@ success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-RDS_ENDPOINT="universite-exemple-poc-mysql.czcugausmn9e.us-east-1.rds.amazonaws.com"
+AWS_REGION="us-east-1"
 DB_USER="dbadmin"
 DB_NAME="students"
-AWS_REGION="us-east-1"
+RDS_ENDPOINT=$(aws rds describe-db-instances   --db-instance-identifier universite-exemple-poc-mysql   --query 'DBInstances[0].Endpoint.Address'   --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+[ -z "$RDS_ENDPOINT" ] || [ "$RDS_ENDPOINT" = "None" ] &&   error "RDS non trouvee - verifiez que terraform apply s'est bien termine"
 PROJECT_TAG="universite-exemple-poc-app-server"
 
 echo "================================================="
 echo "  Phase 2 - Bootstrap (Cloud9, sans Terraform)"
 echo "================================================="
 
-# ── 1. Mot de passe depuis Secrets Manager ────────────────────────────────────
+# 1. Mot de passe
 info "Recuperation du mot de passe depuis Secrets Manager..."
 DB_PASSWORD=$(aws secretsmanager get-secret-value \
   --secret-id "universite-exemple-poc/rds/credentials" \
@@ -34,7 +35,7 @@ DB_PASSWORD=$(aws secretsmanager get-secret-value \
   || error "Secrets Manager inaccessible - verifiez vos credentials AWS"
 success "Mot de passe recupere : ${DB_PASSWORD:0:4}..."
 
-# ── 2. IP publique de l'EC2 ───────────────────────────────────────────────────
+# 2. IP EC2
 info "Recherche de l'instance EC2..."
 APP_IP=$(aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=$PROJECT_TAG" \
@@ -45,14 +46,14 @@ APP_IP=$(aws ec2 describe-instances \
   error "Instance EC2 non trouvee - lancez terraform apply d'abord"
 success "EC2 IP : $APP_IP"
 
-# ── 3. Cle SSH ────────────────────────────────────────────────────────────────
+# 3. Cle SSH
 info "Recherche de la cle SSH..."
 SSH_KEY=$(ls ~/environment/*.pem 2>/dev/null | head -1) \
-  || error "Uploadez labsuser.pem dans ~/environment/ via File > Upload Local Files"
+  || error "Uploadez labsuser.pem (ou labsuser1.pem) dans ~/environment/ via File > Upload Local Files"
 chmod 400 "$SSH_KEY"
 success "Cle SSH : $SSH_KEY"
 
-# ── 4. Security Group RDS ─────────────────────────────────────────────────────
+# 4. SG RDS
 info "Ouverture du Security Group RDS..."
 RDS_SG=$(aws rds describe-db-instances \
   --db-instance-identifier universite-exemple-poc-mysql \
@@ -62,7 +63,7 @@ aws ec2 authorize-security-group-ingress \
   --group-id "$RDS_SG" --protocol tcp --port 3306 --cidr 10.0.0.0/16 \
   --region "$AWS_REGION" 2>/dev/null && success "Regle SG ajoutee" || warn "Regle deja existante"
 
-# ── 5. Secret Mydbsecret (format attendu par l'app atelier) ──────────────────
+# 5. Secret Mydbsecret
 info "Configuration du secret Mydbsecret..."
 SM_VALUE="{\"user\":\"$DB_USER\",\"password\":\"$DB_PASSWORD\",\"host\":\"$RDS_ENDPOINT\",\"db\":\"$DB_NAME\"}"
 aws secretsmanager create-secret --name "Mydbsecret" \
@@ -72,25 +73,45 @@ aws secretsmanager create-secret --name "Mydbsecret" \
        --secret-string "$SM_VALUE" --region "$AWS_REGION" \
        && success "Secret Mydbsecret mis a jour"; }
 
-# ── 6. Table et donnees RDS ───────────────────────────────────────────────────
+# 6. Table RDS - avec retry et diagnostic clair
 info "Initialisation de la base de donnees..."
-mysql -h "$RDS_ENDPOINT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" 2>/dev/null << SQL
-CREATE TABLE IF NOT EXISTS students (
-  id      INT AUTO_INCREMENT PRIMARY KEY,
-  name    VARCHAR(100), address VARCHAR(200),
-  city    VARCHAR(100), state   VARCHAR(50),
-  email   VARCHAR(100), phone   VARCHAR(20)
-);
-INSERT IGNORE INTO students (id,name,address,city,state,email,phone) VALUES
-  (1,'Alice Martin','12 rue de Paris','Paris','IDF','alice@exemple.fr','0601020304'),
-  (2,'Bob Dupont','5 avenue Victor Hugo','Lyon','ARA','bob@exemple.fr','0611223344'),
-  (3,'Clara Durand','8 bd Gambetta','Bordeaux','NAQ','clara@exemple.fr','0622334455');
-SQL
+
+set +e
+MYSQL_OK=0
+for i in $(seq 1 5); do
+  mysql -h "$RDS_ENDPOINT" -u "$DB_USER" -p"$DB_PASSWORD"     -e "SELECT 1;" "$DB_NAME" > /dev/null 2>&1
+  if [ $? -eq 0 ]; then
+    MYSQL_OK=1
+    break
+  fi
+  warn "RDS inaccessible ($i/5) - nouvelle tentative SG + attente 15s..."
+  aws ec2 authorize-security-group-ingress     --group-id "$RDS_SG" --protocol tcp --port 3306 --cidr 10.0.0.0/16     --region "$AWS_REGION" > /dev/null 2>&1
+  sleep 15
+done
+set -e
+
+if [ "$MYSQL_OK" -eq 0 ]; then
+  echo ""
+  echo "  DIAGNOSTIC :"
+  echo "  1. Test connectivite :"
+  echo "     bash -c 'echo >/dev/tcp/$RDS_ENDPOINT/3306' && echo PORT_OUVERT || echo PORT_FERME"
+  echo "  2. SG RDS : $RDS_SG"
+  echo "  3. Statut RDS :"
+  echo "     aws rds describe-db-instances --db-instance-identifier universite-exemple-poc-mysql --query 'DBInstances[0].DBInstanceStatus'"
+  error "Impossible de se connecter a RDS apres 5 tentatives"
+fi
+
+mysql -h "$RDS_ENDPOINT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+  -e "CREATE TABLE IF NOT EXISTS students (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), address VARCHAR(200), city VARCHAR(100), state VARCHAR(50), email VARCHAR(100), phone VARCHAR(20));"
+
+mysql -h "$RDS_ENDPOINT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+  -e "INSERT IGNORE INTO students (id,name,address,city,state,email,phone) VALUES (1,'Alice Martin','12 rue de Paris','Paris','IDF','alice@exemple.fr','0601020304'),(2,'Bob Dupont','5 avenue Victor Hugo','Lyon','ARA','bob@exemple.fr','0611223344'),(3,'Clara Durand','8 bd Gambetta','Bordeaux','NAQ','clara@exemple.fr','0622334455');"
+
 COUNT=$(mysql -h "$RDS_ENDPOINT" -u "$DB_USER" -p"$DB_PASSWORD" \
-  -sN -e "SELECT COUNT(*) FROM ${DB_NAME}.students;" 2>/dev/null)
+  -sN -e "SELECT COUNT(*) FROM ${DB_NAME}.students;")
 success "Table students : $COUNT enregistrements"
 
-# ── 7. Service Node.js sur EC2 ────────────────────────────────────────────────
+# 7. Service Node.js sur EC2
 info "Configuration du service Node.js sur l'EC2..."
 for i in $(seq 1 10); do
   ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
@@ -133,7 +154,7 @@ sudo systemctl is-active students-app
 ENDSSH
 success "Service Node.js configure et demarre"
 
-# ── 8. Verification finale ────────────────────────────────────────────────────
+# 8. Verification finale
 sleep 3
 HTTP=$(curl -s -o /dev/null -w "%{http_code}" "http://$APP_IP" 2>/dev/null || echo "000")
 echo ""
